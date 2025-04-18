@@ -62,6 +62,32 @@ class MainWindow(QMainWindow):
         # Show welcome screen by default
         self.stacked_widget.setCurrentIndex(0)
     
+    def challenge_word(self):
+        """Challenge the AI's last word."""
+        if not self.game_controller:
+            return
+
+        last_move = self.game_controller.last_move
+        if last_move['player'] != 'ai' or last_move['word'] == 'PASS':
+            return
+
+        result = self.game_controller.challenge_word(last_move['word'])
+        
+        if result:
+            QMessageBox.information(
+                self,
+                "Challenge Successful",
+                f"Challenge successful! The word '{last_move['word']}' was invalid.\n"
+                f"Points have been deducted from AI's score."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Challenge Failed",
+                f"Challenge failed! The word '{last_move['word']}' is valid.\n"
+                f"You have been penalized {self.game_controller.challenge_penalty} points."
+            )
+    
     def create_welcome_screen(self):
         """Create the welcome screen widget."""
         self.welcome_screen = QWidget()

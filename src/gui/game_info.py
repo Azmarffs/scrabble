@@ -175,6 +175,27 @@ class GameInfoWidget(QWidget):
         last_move_layout = QVBoxLayout(last_move_frame)
         last_move_layout.setContentsMargins(8, 8, 8, 8)  # Increased padding
         last_move_layout.setSpacing(8)  # Increased spacing
+
+        # Challenge frame
+        challenge_frame = QFrame()
+        challenge_frame.setFrameStyle(QFrame.Panel | QFrame.Raised)
+        challenge_frame.setLineWidth(1)
+        challenge_layout = QVBoxLayout(challenge_frame)
+        challenge_layout.setContentsMargins(8, 8, 8, 8)
+        challenge_layout.setSpacing(8)
+
+        # Challenge button
+        self.challenge_btn = QPushButton("Challenge Word")
+        self.challenge_btn.clicked.connect(self.challenge_clicked)
+        self.challenge_btn.setEnabled(False)
+        challenge_layout.addWidget(self.challenge_btn)
+
+        # Challenge timer
+        self.challenge_timer_label = QLabel("Challenge Time: --")
+        self.challenge_timer_label.setAlignment(Qt.AlignCenter)
+        challenge_layout.addWidget(self.challenge_timer_label)
+
+        main_layout.addWidget(challenge_frame)
         
         # Last move title
         last_move_title = QLabel("Last Move:")
@@ -209,6 +230,11 @@ class GameInfoWidget(QWidget):
         main_layout.addStretch(1)
         
         self.setLayout(main_layout)
+
+    def challenge_clicked(self):
+        """Handle challenge button click."""
+        if hasattr(self.parent(), 'challenge_word'):
+            self.parent().challenge_word()
     
     def update_info(self, game_info):
         """Update the game information."""
@@ -260,3 +286,15 @@ class GameInfoWidget(QWidget):
         last_move = game_info.get('last_move', {'word': 'None', 'score': 0})
         self.last_move_label.setText(last_move.get('word', 'None'))
         self.last_move_score_label.setText(str(last_move.get('score', 0))) 
+
+        # Update challenge information
+        can_challenge = game_info.get('can_challenge', False)
+        challenge_time = game_info.get('challenge_time', 0)
+        
+        self.challenge_btn.setEnabled(can_challenge)
+        if can_challenge:
+            self.challenge_timer_label.setText(f"Challenge Time: {challenge_time}s")
+            self.challenge_timer_label.setStyleSheet("color: #CC0000;")
+        else:
+            self.challenge_timer_label.setText("Challenge Time: --")
+            self.challenge_timer_label.setStyleSheet("")

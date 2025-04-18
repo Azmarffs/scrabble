@@ -4,6 +4,7 @@
 import json
 import time
 import random
+from PyQt5.QtCore import QTimer
 from datetime import datetime, timedelta
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 
@@ -49,7 +50,13 @@ class GameController(QObject):
         self.current_move_tiles = []  # [(row, col, letter, value), ...]
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_game_time)
-        
+        self.challenge_timer = QTimer()
+        self.challenge_timer.timeout.connect(self.challenge_timeout)
+        self.challenge_time = 30  # 30 seconds to make a challenge
+        self.challenge_remaining = 0
+        self.can_challenge = False
+        self.current_challenge = None
+        self.challenge_penalty = 10  # Points deducted for failed challenge
         # Statistics
         self.player_score = 0
         self.ai_score = 0
@@ -89,6 +96,79 @@ class GameController(QObject):
         # Emit signals to update UI
         self.emit_board_update()
         self.emit_rack_update()
+        self.emit_game_info_update()
+    
+    def start_challenge_period(self):
+        """Start the period during which a word can be challenged."""
+        self.can_challenge = True
+        self.challenge_remaining = self.challenge_time
+        self.challenge_timer.start(1000)  # Update every second
+        self.emit_game_info_update()
+
+    def challenge_timeout(self):
+        """Handle challenge timer timeout."""
+        self.challenge_remaining -= 1
+        if self.challenge_remaining <= 0:
+            self.end_challenge_period()
+        self.emit_game_info_update()
+
+    def end_challenge_period(self):
+        """End the challenge period."""
+        self.challenge_timer.stop()
+        self.can_challenge = False
+        self.challenge_remaining = 0
+        self.emit_game_info_update()
+
+    def challenge_word(self, word):
+        """Challenge the validity of a word.
+        
+        Args:
+            word: The word being challenged.
+            
+        Returns:
+            bool: True if challenge successful, False if failed.
+        """
+        if not self.can_challenge:
+            return False
+
+        # Check if word is actually valid
+        is_valid = self.word_validator.is_valid_word(word)
+        
+        if not is_valid:
+            # Challenge successful - remove word and deduct points
+            self.handle_successful_challenge(word)
+            return True
+        else:
+            # Challenge failed - penalize challenger
+            self.handle_failed_challenge()
+            return False
+
+    def handle_successful_challenge(self, word):
+        """Handle a successful word challenge.
+        
+        Args:
+            word: The successfully challenged word.
+        """
+        # Find the move that placed this word
+        for row, col, letter, value in self.current_move_tiles:
+            self.board.remove_tile(row, col)
+            self.ai_player.player.add_tile(letter, value)
+
+        # Deduct points from AI's score
+        self.ai_score -= self.last_move["score"]
+        
+        # Update game state
+        self.end_challenge_period()
+        self.emit_board_update()
+        self.emit_game_info_update()
+
+    def handle_failed_challenge(self):
+        """Handle a failed word challenge."""
+        # Deduct penalty points from player
+        self.player_score = max(0, self.player_score - self.challenge_penalty)
+        
+        # End challenge period
+        self.end_challenge_period()
         self.emit_game_info_update()
     
     def load_game(self, game_data):
@@ -450,29 +530,32 @@ class GameController(QObject):
         """Execute the AI's move."""
         if self.current_player != "ai" or self.is_game_over:
             return
-        
+
         # Get AI move
         move = self.ai_player.make_move(self.tile_bag.get_remaining_tiles_count())
-        
+
         if move and move['tiles']:
             # Place tiles on board
             for row, col, letter, value in move['tiles']:
                 self.board.place_tile(row, col, letter, value)
                 self.ai_player.player.remove_tile(letter)
-            
+
             # Update score
             self.ai_score += move['score']
-            
+
             # Update last move info
             self.last_move = {
                 "player": "ai",
                 "word": move['word'],
                 "score": move['score']
             }
-            
+
+            # Start challenge period
+            self.start_challenge_period()
+
             # Reset pass count
             self.pass_count = 0
-            
+
             # Draw new tiles for AI
             new_tiles = self.tile_bag.draw_tiles(7 - len(self.ai_player.player.tiles))
             for letter, value in new_tiles:
@@ -480,40 +563,40 @@ class GameController(QObject):
         else:
             # AI passes
             self.pass_count += 1
-            
+
             # Update last move info
             self.last_move = {
                 "player": "ai",
                 "word": "PASS",
                 "score": 0
             }
-        
+
         # Save move to database if a game is in progress
         if self.game_id and move and move['tiles']:
             # Convert positions to string for database
             pos_str = ','.join([f"({r},{c})" for r, c, _, _ in move['tiles']])
             direction = "horizontal" if move['direction'] == 'horizontal' else "vertical"
-            
+
             self.db_manager.save_move(
-                self.game_id, 
+                self.game_id,
                 -1,  # AI player ID
-                move['word'], 
-                move['score'], 
-                pos_str, 
-                direction, 
+                move['word'],
+                move['score'],
+                pos_str,
+                direction,
                 self.turn_number
             )
-        
+
         # Increment turn number
         self.turn_number += 1
-        
+
         # Check for game over
         if self.check_game_over():
             return
-        
+
         # Switch back to player's turn
         self.current_player = "player"
-        
+
         # Emit signals
         self.emit_board_update()
         self.emit_game_info_update()
@@ -687,22 +770,20 @@ class GameController(QObject):
     
     def get_game_info(self):
         """Get the current game information."""
-        # Calculate progress percentage
-        total_tiles = 100  # Total tiles in a standard Scrabble game
-        tiles_played = total_tiles - self.tile_bag.get_remaining_tiles_count() - len(self.player.tiles) - len(self.ai_player.player.tiles)
-        progress = min(100, int((tiles_played / total_tiles) * 100))
-        
-        return {
+        info = {
             'player_score': self.player_score,
             'ai_score': self.ai_score,
             'difficulty': self.difficulty,
             'is_player_turn': self.current_player == "player",
             'turn_number': self.turn_number,
             'tiles_remaining': self.tile_bag.get_remaining_tiles_count(),
-            'progress': progress,
+            'progress': min(100, int(((100 - self.tile_bag.get_remaining_tiles_count()) / 100) * 100)),
             'game_time': self.game_time,
-            'last_move': self.last_move
+            'last_move': self.last_move,
+            'can_challenge': self.can_challenge,
+            'challenge_time': self.challenge_remaining
         }
+        return info
     
     def emit_board_update(self):
         """Emit a signal to update the board."""
